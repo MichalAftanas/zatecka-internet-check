@@ -26,10 +26,13 @@ FortiGate router (FGT-40)
 
 Cloudflare Worker cron (every 5 min, reliable)
   → worker/index.js polls Gmail API for new FortiGate emails
-  → uses KV-stored lastEventDate to narrow Gmail query (after:YYYY/MM/DD)
+  → uses KV-stored lastPollEpoch (epoch seconds) to narrow Gmail query (after:<epoch>)
+  → fetches at most FETCH_CAP (30) message bodies per run, oldest first, to stay
+    under Cloudflare's 50-subrequest/invocation free-plan limit; any backlog drains
+    across successive 5-min runs
   → new events appended to data/events-001.json (deduplicated by eventtime)
   → if new data: committed to GitHub via Contents API
-  → records lastPolledAt + lastEventDate in Cloudflare KV after success
+  → records lastPolledAt + advances lastPollEpoch in Cloudflare KV after success
 
 Dashboard (https://itrinity.pages.dev/zatecka-internet-check/)
   → static HTML/JS served from Cloudflare Pages
@@ -137,7 +140,7 @@ echo <token> | wrangler secret put GITHUB_TOKEN
 ### KV namespace
 The `POLLER_STATE` KV namespace (id: `620ec9cab32e4efd8391c6704cd673e0`) stores:
 - `lastPolledAt` — ISO timestamp of last successful poll
-- `lastEventDate` — date (YYYY-MM-DD) of newest ingested event, used to narrow Gmail queries
+- `lastPollEpoch` — epoch seconds of the newest email processed, used to narrow Gmail queries (`after:<epoch>`). Migrated from the old day-resolution `lastEventDate`, which could deadlock the poller when a single day's flapping produced more emails than the 50-subrequest limit allowed fetching.
 
 If re-creating: `wrangler kv namespace create POLLER_STATE` → update id in `wrangler.toml`.
 
@@ -158,7 +161,7 @@ Everything is free:
 
 - **Gmail refresh token expires?** Unlikely (Google only expires tokens after 6 months of inactivity or consent revocation). If it does: re-run `gmail-mcp` auth for palefire account, update `GMAIL_REFRESH_TOKEN` Worker secret.
 - **GitHub token expires?** Never — created with no expiration. If revoked: create new fine-grained PAT (`zatecka-internet-check` repo, Contents: read+write), run `echo <token> | wrangler secret put GITHUB_TOKEN` from `worker/` directory.
-- **Worker cron not firing?** Check Worker logs in Cloudflare dashboard → Workers & Pages → zatecka-check-now → Observability. Also verify via `GET https://zatecka-check-now.michal-aftanas.workers.dev` — if `lastPolledAt` is stale, something is wrong.
+- **Worker cron not firing?** Check Worker logs in Cloudflare dashboard → Workers & Pages → zatecka-check-now → Observability. Also verify via `GET https://zatecka-check-now.michal-aftanas.workers.dev` — if `lastPolledAt` is stale, something is wrong. If a manual POST fails after ~9 s (not ~1 s), the poll is running but throwing mid-work; the most likely cause is exceeding the 50-subrequest free-plan limit on a large email backlog (see `FETCH_CAP` in `worker/index.js`).
 - **Adding a new interface?** Add it to the `IFACES` object in `index.html` and redeploy Pages. FortiGate emails will be picked up automatically as long as the interface name matches.
 - **Data file rotation?** Handled automatically by the Worker. Old files stay in the repo forever; `data/index.json` lists all of them and the dashboard loads all.
 - **Emergency manual poll?** GitHub Actions → poll.yml → Run workflow. Or: `curl -X POST https://zatecka-check-now.michal-aftanas.workers.dev`.

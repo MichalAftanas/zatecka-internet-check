@@ -22,6 +22,13 @@ const REPO_NAME      = 'zatecka-internet-check';
 const BRANCH         = 'main';
 const MAX_FILE_BYTES = 10 * 1024 * 1024; // 10 MB rotation threshold
 
+// Cloudflare's free plan allows 50 subrequests per Worker invocation. Each email
+// body is one subrequest, plus ~4 for token/list/GitHub reads and 1 for the commit.
+// Cap the bodies fetched per poll well under that ceiling; any backlog drains across
+// successive 5-minute runs. (A June 2026 flapping storm produced >50 emails in the
+// query window, which blew past the limit and deadlocked the poller for two weeks.)
+const FETCH_CAP = 30;
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default {
@@ -65,36 +72,55 @@ export default {
 async function runPoll(env) {
   const gmailToken = await getGmailToken(env);
 
-  // Use stored date to narrow Gmail query and stay under subrequest limit
-  const lastEventDate = await env.KV?.get('lastEventDate');
-  const messages = await listGmailMessages(gmailToken, lastEventDate);
+  // Second-resolution cursor: fetch only emails received after it. Replaces the old
+  // coarse `lastEventDate` (YYYY-MM-DD) cursor, which could deadlock: a single heavy
+  // flapping day produced more emails than the 50-subrequest budget could fetch, and a
+  // date cursor can't advance within a day, so every poll re-read the same oversized
+  // window and threw before committing.
+  const sinceEpoch = await getCursorEpoch(env);
+  const messages = await listGmailMessages(gmailToken, sinceEpoch);
 
   if (messages.length === 0) {
     console.log('No FortiGate emails found');
     await env.KV?.put('lastPolledAt', new Date().toISOString()).catch(console.error);
     return { new_events: 0 };
   }
-  console.log(`Checking ${messages.length} candidate emails`);
+
+  // Gmail lists newest-first; take the OLDEST batch so the cursor moves forward and any
+  // backlog drains in chronological order across successive polls.
+  const batch = messages.slice(-FETCH_CAP);
+  const backlog = messages.length - batch.length;
+  console.log(`Fetching ${batch.length} of ${messages.length} candidate emails (oldest first, backlog ${backlog})`);
 
   const { index, indexSha, data, dataSha, dataPath } = await loadRepoData(env);
   const seenEids = new Set(data.events.map(e => e.eid));
 
   const newEvents = [];
-  for (const { id } of messages) {
-    const html = await fetchMessageHtml(gmailToken, id);
-    if (!html) continue;
+  let cursorMs = 0; // max internalDate (ms) of successfully fetched messages this poll
+  for (const { id } of batch) {
+    const msg = await fetchMessage(gmailToken, id);
+    if (!msg) continue; // transient fetch failure, leave cursor, retry next poll
+    if (msg.internalMs > cursorMs) cursorMs = msg.internalMs;
+    if (!msg.html) continue;
     let event;
-    try { event = parseFortiGateEmail(html); } catch { continue; }
+    try { event = parseFortiGateEmail(msg.html); } catch { continue; }
     if (seenEids.has(event.eid)) continue;
     newEvents.push(event);
     seenEids.add(event.eid);
     console.log(`+event  ${event.ts}  ${event.iface}  ${event.from}→${event.to}`);
   }
 
+  // Advance the cursor past this batch even if every message was a duplicate, so the
+  // next poll steps forward instead of re-reading the same window. Subtract 1s so
+  // same-second boundary messages aren't skipped; the eid set dedups the small overlap.
+  if (cursorMs > 0) {
+    await env.KV?.put('lastPollEpoch', String(Math.floor(cursorMs / 1000) - 1)).catch(console.error);
+  }
+
   if (newEvents.length === 0) {
-    console.log('No new events');
+    console.log('No new events in this batch');
     await env.KV?.put('lastPolledAt', new Date().toISOString()).catch(console.error);
-    return { new_events: 0 };
+    return { new_events: 0, backlog };
   }
 
   data.events.push(...newEvents);
@@ -106,16 +132,26 @@ async function runPoll(env) {
   );
   console.log(`Committed ${newEvents.length} new event(s)`);
 
-  // Store newest event date for narrowing future Gmail queries
-  const newestDate = data.events[data.events.length - 1].ts.slice(0, 10);
-  await env.KV?.put('lastEventDate', newestDate).catch(console.error);
   await env.KV?.put('lastPolledAt', new Date().toISOString()).catch(console.error);
 
   if (JSON.stringify(data).length > MAX_FILE_BYTES) {
     await rotateDataFile(env, index, indexSha);
   }
 
-  return { new_events: newEvents.length };
+  return { new_events: newEvents.length, backlog };
+}
+
+// Resolve the poll cursor (epoch seconds). Prefers the precise `lastPollEpoch`, falls
+// back to migrating the old coarse `lastEventDate` key, then to the last 3 days.
+async function getCursorEpoch(env) {
+  const stored = await env.KV?.get('lastPollEpoch');
+  if (stored) return Number(stored);
+  const oldDate = await env.KV?.get('lastEventDate');
+  if (oldDate) {
+    // Start one day before the stored date, matching the previous 1-day query buffer.
+    return Math.floor(Date.parse(oldDate + 'T00:00:00Z') / 1000) - 86400;
+  }
+  return Math.floor(Date.now() / 1000) - 3 * 86400;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -138,17 +174,10 @@ async function getGmailToken(env) {
   return access_token;
 }
 
-async function listGmailMessages(token, lastEventDate) {
-  let query;
-  if (lastEventDate) {
-    // Subtract 1 day as buffer, format as YYYY/MM/DD for Gmail
-    const d = new Date(lastEventDate + 'T00:00:00Z');
-    d.setUTCDate(d.getUTCDate() - 1);
-    const after = `${d.getUTCFullYear()}/${String(d.getUTCMonth() + 1).padStart(2, '0')}/${String(d.getUTCDate()).padStart(2, '0')}`;
-    query = `from:fgt@palefire.com after:${after}`;
-  } else {
-    query = 'from:fgt@palefire.com newer_than:3d';
-  }
+async function listGmailMessages(token, sinceEpoch) {
+  // Gmail search accepts a Unix timestamp (epoch seconds) for after:, giving
+  // second-resolution filtering (unlike the YYYY/MM/DD form, which is day-only).
+  const query = `from:fgt@palefire.com after:${sinceEpoch}`;
   console.log(`Gmail query: ${query}`);
   const q = encodeURIComponent(query);
   const res = await fetch(
@@ -160,14 +189,15 @@ async function listGmailMessages(token, lastEventDate) {
   return json.messages ?? [];
 }
 
-async function fetchMessageHtml(token, id) {
+async function fetchMessage(token, id) {
   const res = await fetch(
     `https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}?format=full`,
     { headers: { Authorization: `Bearer ${token}` } },
   );
   if (!res.ok) return null;
   const msg = await res.json();
-  return extractHtmlPart(msg.payload);
+  // internalDate is Gmail's receive time in epoch milliseconds (string).
+  return { html: extractHtmlPart(msg.payload), internalMs: Number(msg.internalDate) || 0 };
 }
 
 function extractHtmlPart(payload) {
