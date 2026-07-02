@@ -110,15 +110,18 @@ async function runPoll(env) {
     console.log(`+event  ${event.ts}  ${event.iface}  ${event.from}→${event.to}`);
   }
 
-  // Advance the cursor past this batch even if every message was a duplicate, so the
-  // next poll steps forward instead of re-reading the same window. Subtract 1s so
-  // same-second boundary messages aren't skipped; the eid set dedups the small overlap.
-  if (cursorMs > 0) {
-    await env.KV?.put('lastPollEpoch', String(Math.floor(cursorMs / 1000) - 1)).catch(console.error);
-  }
+  // Advance the cursor to this batch's newest message. Subtract 1s so same-second
+  // boundary messages aren't skipped; the eid set dedups the small re-read overlap.
+  // Only PERSIST the cursor after a successful commit, so a failed commit (e.g. a
+  // GitHub write race) retries the same batch next poll instead of skipping it.
+  const advanceCursor = () =>
+    cursorMs > 0
+      ? env.KV?.put('lastPollEpoch', String(Math.floor(cursorMs / 1000) - 1)).catch(console.error)
+      : Promise.resolve();
 
   if (newEvents.length === 0) {
     console.log('No new events in this batch');
+    await advanceCursor(); // no commit needed; safe to step past an all-duplicate batch
     await env.KV?.put('lastPolledAt', new Date().toISOString()).catch(console.error);
     return { new_events: 0, backlog };
   }
@@ -132,6 +135,7 @@ async function runPoll(env) {
   );
   console.log(`Committed ${newEvents.length} new event(s)`);
 
+  await advanceCursor(); // commit succeeded, now it's safe to advance
   await env.KV?.put('lastPolledAt', new Date().toISOString()).catch(console.error);
 
   if (JSON.stringify(data).length > MAX_FILE_BYTES) {
