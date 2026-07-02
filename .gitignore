@@ -4,3 +4,6 @@ worker/.wrangler/
 
 # Test/scratch files
 *.eml
+
+# Local session state (internal notes, not for this public repo)
+SESSION.md
