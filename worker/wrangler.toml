@@ -2,8 +2,9 @@ name = "zatecka-check-now"
 main = "index.js"
 compatibility_date = "2024-01-01"
 
+# every 6h (was */5): each run writes 1-2 KV keys; 4 runs/day stays far under the free-tier 1k writes/day cap
 [triggers]
-crons = ["*/5 * * * *"]
+crons = ["0 */6 * * *"]
 
 [[kv_namespaces]]
 binding = "KV"

@@ -24,12 +24,12 @@ FortiGate router (FGT-40)
   → sends email to fgt@palefire.com on every link up/down event
   → received at michal@palefire.com
 
-Cloudflare Worker cron (every 5 min, reliable)
+Cloudflare Worker cron (every 6 h)
   → worker/index.js polls Gmail API for new FortiGate emails
   → uses KV-stored lastPollEpoch (epoch seconds) to narrow Gmail query (after:<epoch>)
   → fetches at most FETCH_CAP (30) message bodies per run, oldest first, to stay
     under Cloudflare's 50-subrequest/invocation free-plan limit; any backlog drains
-    across successive 5-min runs
+    across successive polls (up to 30 events per 6 h run)
   → new events appended to data/events-001.json (deduplicated by eventtime)
   → if new data: committed to GitHub via Contents API
   → records lastPolledAt + advances lastPollEpoch in Cloudflare KV after success
@@ -149,11 +149,13 @@ If re-creating: `wrangler kv namespace create POLLER_STATE` → update id in `wr
 ## Costs
 
 Everything is free:
-- **Cloudflare Worker** — 100 000 req/day free (288 cron runs/day + manual triggers)
-- **Cloudflare KV** — 1 000 writes/day free (288 used), 100 000 reads/day free
+- **Cloudflare Worker** — 100 000 req/day free (4 cron runs/day + manual triggers)
+- **Cloudflare KV** — 1 000 writes/day free (~4-8 used: 1-2 writes per run, 4 runs/day), 100 000 reads/day free
 - **Cloudflare Pages** — unlimited requests and deploys
 - **GitHub** — public repo, Contents API unlimited for authenticated requests
 - **Gmail API** — free well within quota
+
+Poll cadence is every 6 h (`0 */6 * * *`), set 2026-07-07. It was `*/5` (every 5 min) until then, but 288 cron runs/day each wrote 1-2 KV keys (`lastPolledAt`, `lastPollEpoch`), so 288-576 writes/day crossed Cloudflare's free-tier "50% of 1 000 writes/day" alert. At 6 h it writes ~4-8 keys/day. Trade-offs: dashboard data can lag up to 6 h, and a heavy flapping backlog drains slower (max 30 events per run), use the dashboard "Check Now" button to force an immediate poll.
 
 ---
 

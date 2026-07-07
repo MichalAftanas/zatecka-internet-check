@@ -5,7 +5,7 @@
  * and triggers a Cloudflare Pages redeploy.
  *
  * Handles:
- *   Cron (every 5 minutes)  — automatic poll
+ *   Cron (every 6 hours)   — automatic poll
  *   POST /              — manual poll ("Check now" button in dashboard)
  *   GET  /              — return { lastPolledAt } for dashboard "Last checked"
  *
@@ -25,7 +25,7 @@ const MAX_FILE_BYTES = 10 * 1024 * 1024; // 10 MB rotation threshold
 // Cloudflare's free plan allows 50 subrequests per Worker invocation. Each email
 // body is one subrequest, plus ~4 for token/list/GitHub reads and 1 for the commit.
 // Cap the bodies fetched per poll well under that ceiling; any backlog drains across
-// successive 5-minute runs. (A June 2026 flapping storm produced >50 emails in the
+// successive polls. (A June 2026 flapping storm produced >50 emails in the
 // query window, which blew past the limit and deadlocked the poller for two weeks.)
 const FETCH_CAP = 30;
 
