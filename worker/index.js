@@ -17,7 +17,7 @@
  *   binding = "KV"
  */
 
-const REPO_OWNER     = 'aftanasmichal';
+const REPO_OWNER     = 'MichalAftanas';
 const REPO_NAME      = 'zatecka-internet-check';
 const BRANCH         = 'main';
 const MAX_FILE_BYTES = 10 * 1024 * 1024; // 10 MB rotation threshold
@@ -38,7 +38,7 @@ export default {
 
   async fetch(request, env) {
     const cors = {
-      'Access-Control-Allow-Origin': 'https://itrinity.pages.dev',
+      'Access-Control-Allow-Origin': 'https://reports.itrinity.com',
       'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     };
 
