@@ -3,7 +3,7 @@
 Dashboard monitoring internet stability at the PFC office on Žatecká street, Prague.
 Tracks two SD-WAN links reported by the FortiGate FGT-40 router via email.
 
-**Live dashboard:** https://itrinity.pages.dev/zatecka-internet-check/
+**Live dashboard:** https://reports.itrinity.com/internal/zatecka-internet-check/ (Google sign-in; migrated 2026-07-13, the old `itrinity.pages.dev/zatecka-internet-check/` 302-redirects there)
 **GitHub repo:** https://github.com/aftanasmichal/zatecka-internet-check
 
 ---
@@ -34,8 +34,8 @@ Cloudflare Worker cron (every 6 h)
   → if new data: committed to GitHub via Contents API
   → records lastPolledAt + advances lastPollEpoch in Cloudflare KV after success
 
-Dashboard (https://itrinity.pages.dev/zatecka-internet-check/)
-  → static HTML/JS served from Cloudflare Pages
+Dashboard (https://reports.itrinity.com/internal/zatecka-internet-check/)
+  → static HTML/JS served from the reports portal (Worker + private R2, Google sign-in)
   → fetches data/*.json directly from GitHub raw URLs (always current)
   → shows current status, uptime %, 7-day hourly timeline, 365-day daily timeline, incidents
   → timelines color each hour/day bucket by total downtime (0 s green, 1-30 s orange, 31 s+ red)
@@ -116,12 +116,18 @@ cd projects/work/zatecka-internet-check/worker
 wrangler deploy
 ```
 
-### Cloudflare Pages (dashboard)
-Only needed when `index.html` changes — data updates go directly to GitHub, not through Pages.
-Static files live in `itrinity-pages/zatecka-internet-check/` in the CoS root.
+### Publishing the dashboard
+Only needed when `index.html` changes — data updates go straight to GitHub and are fetched
+client-side, so they never touch the portal.
+
+The dashboard lives in the reports-portal repo at
+`projects/work/itrinity_Reports_Portal/content/internal/zatecka-internet-check/index.html`.
+There is no `wrangler pages deploy` since the 2026-07-13 migration: **the git push is the deploy.**
 ```bash
-# from CoS root:
-npx wrangler pages deploy itrinity-pages --project-name itrinity --branch main --commit-dirty=true
+cd projects/work/itrinity_Reports_Portal
+git add content/internal/zatecka-internet-check/index.html
+git commit -m "chore(zatecka): dashboard update"
+git push origin main   # CI syncs content/ to R2 (~2 min)
 ```
 
 ### Worker secrets (if re-setting up from scratch)
@@ -151,7 +157,7 @@ If re-creating: `wrangler kv namespace create POLLER_STATE` → update id in `wr
 Everything is free:
 - **Cloudflare Worker** — 100 000 req/day free (4 cron runs/day + manual triggers)
 - **Cloudflare KV** — 1 000 writes/day free (~4-8 used: 1-2 writes per run, 4 runs/day), 100 000 reads/day free
-- **Cloudflare Pages** — unlimited requests and deploys
+- **Reports portal** (Worker + R2) — hosts the dashboard; no extra cost, it already serves the board reports
 - **GitHub** — public repo, Contents API unlimited for authenticated requests
 - **Gmail API** — free well within quota
 
