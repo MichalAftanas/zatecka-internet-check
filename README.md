@@ -118,10 +118,12 @@ wrangler deploy
 
 ### Publishing the dashboard
 Only needed when `index.html` changes — data updates go straight to GitHub and are fetched
-client-side, so they never touch the portal.
+client-side from this repo's raw URLs, so they never touch the portal and need no deploy.
 
-The dashboard lives in the reports-portal repo at
+There are two copies of `index.html`: this repo's (the working source) and the **published**
+one in the reports-portal repo at
 `projects/work/itrinity_Reports_Portal/content/internal/zatecka-internet-check/index.html`.
+The portal copy is what actually serves, so a UI change must be copied over to it.
 There is no `wrangler pages deploy` since the 2026-07-13 migration: **the git push is the deploy.**
 ```bash
 cd projects/work/itrinity_Reports_Portal

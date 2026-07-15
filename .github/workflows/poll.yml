@@ -34,9 +34,13 @@ jobs:
           git commit -m "data: ingest new FortiGate events [skip ci]"
           git push
 
-      - name: Deploy to Cloudflare Pages
-        if: steps.poll.outputs.new_data == 'true'
-        run: npx wrangler pages deploy . --project-name zatecka-internet-check --branch main --commit-dirty=true
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: c99cc016d12ed9a666d4e2c3f90c58cc
+      # No deploy step. The dashboard is served from reports.itrinity.com/internal/
+      # zatecka-internet-check/ (Worker + private R2, Google sign-in) and fetches
+      # data/*.json straight from this repo's GitHub raw URLs, so committing the data
+      # above IS the update: nothing needs publishing.
+      #
+      # The old step here ran `wrangler pages deploy . --project-name
+      # zatecka-internet-check`. That Pages project does not exist (verified
+      # 2026-07-15: the personal account has only itrinity, plachteni, myaquarium),
+      # so the step could only fail, or worse have wrangler CREATE the project and
+      # publish an UNGATED public copy of the dashboard. Removed 2026-07-15.
