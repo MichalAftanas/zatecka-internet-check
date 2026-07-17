@@ -33,7 +33,10 @@ const FETCH_CAP = 30;
 
 export default {
   async scheduled(_event, env, ctx) {
-    ctx.waitUntil(runPoll(env));
+    // liveness: ping the UptimeRobot heartbeat only after a successful poll
+    ctx.waitUntil(runPoll(env).then(() => {
+      if (env.HEARTBEAT_URL) return fetch(env.HEARTBEAT_URL);
+    }));
   },
 
   async fetch(request, env) {
