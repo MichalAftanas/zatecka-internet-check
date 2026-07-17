@@ -4,7 +4,7 @@ Dashboard monitoring internet stability at the PFC office on Žatecká street, P
 Tracks two SD-WAN links reported by the FortiGate FGT-40 router via email.
 
 **Live dashboard:** https://reports.itrinity.com/internal/zatecka-internet-check/ (Google sign-in; migrated 2026-07-13, the old `itrinity.pages.dev/zatecka-internet-check/` 302-redirects there)
-**GitHub repo:** https://github.com/aftanasmichal/zatecka-internet-check
+**GitHub repo:** https://github.com/MichalAftanas/zatecka-internet-check (migrated from `aftanasmichal` 2026-07-13 per the account rule; still public so the raw-data fetch keeps working)
 
 ---
 
