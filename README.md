@@ -83,7 +83,7 @@ Local credential files (bootstrap only):
 
 Gmail OAuth app: Google Cloud project `claude-gmail-490805`
 
-GitHub token: fine-grained PAT `zatecka-internet-check`, no expiration, permission: Contents read+write.
+GitHub token: fine-grained PAT (owner MichalAftanas, repo `zatecka-internet-check` only, Contents: read+write), stored at `~/.Git/zatecka-worker-github-token.json`. NOT truly no-expiration: a fine-grained PAT can also lose repo access when the repo changes owner. It did, silently, after the 2026-07-13 owner transfer (aftanasmichal -> MichalAftanas): the Worker's PAT began returning 401, the poller stalled 11 days (from 2026-07-20) until the heartbeat flagged it, fixed 2026-07-31 by issuing a fresh scoped PAT.
 
 ---
 
@@ -170,7 +170,8 @@ Poll cadence is every 6 h (`0 */6 * * *`), set 2026-07-07. It was `*/5` (every 5
 ## Maintenance notes
 
 - **Gmail refresh token expires?** Unlikely (Google only expires tokens after 6 months of inactivity or consent revocation). If it does: re-run `gmail-mcp` auth for palefire account, update `GMAIL_REFRESH_TOKEN` Worker secret.
-- **GitHub token expires?** Never — created with no expiration. If revoked: create new fine-grained PAT (`zatecka-internet-check` repo, Contents: read+write), run `echo <token> | wrangler secret put GITHUB_TOKEN` from `worker/` directory.
+- **GitHub token 401 (this stalled the poller 11 days in July 2026)?** The fine-grained PAT can be revoked or lose access on a repo-owner transfer, it is not truly no-expiration. Diagnosis: a manual `POST` fails FAST (~0.7s, HTTP 500) and `wrangler tail zatecka-check-now` shows `GitHub GET data/index.json: 401` (a ~9s failure is instead the email-backlog case below). Fix: create a fresh fine-grained PAT (owner MichalAftanas, repo `zatecka-internet-check` only, Contents: read+write), save it to `~/.Git/zatecka-worker-github-token.json`, then from `worker/` run `printf '%s' <token> | wrangler secret put GITHUB_TOKEN` (CF auth via `~/.cloudflare/personal-gmail-pages-token.json`). Secrets propagate in a few seconds, so re-test the `POST` after a moment.
+- **Gmail 401 / token refresh failed?** `wrangler tail` shows `Gmail token refresh failed: <status>` (fails at the very first step). Re-run the `gmail-mcp` palefire auth, then re-set `GMAIL_CLIENT_ID` / `GMAIL_CLIENT_SECRET` / `GMAIL_REFRESH_TOKEN` from `~/.gmail-mcp/palefire/` via `wrangler secret put`.
 - **Worker cron not firing?** Check Worker logs in Cloudflare dashboard → Workers & Pages → zatecka-check-now → Observability. Also verify via `GET https://zatecka-check-now.michal-aftanas.workers.dev` — if `lastPolledAt` is stale, something is wrong. If a manual POST fails after ~9 s (not ~1 s), the poll is running but throwing mid-work; the most likely cause is exceeding the 50-subrequest free-plan limit on a large email backlog (see `FETCH_CAP` in `worker/index.js`).
 - **Adding a new interface?** Add it to the `IFACES` object in `index.html` and redeploy Pages. FortiGate emails will be picked up automatically as long as the interface name matches.
 - **Data file rotation?** Handled automatically by the Worker. Old files stay in the repo forever; `data/index.json` lists all of them and the dashboard loads all.
