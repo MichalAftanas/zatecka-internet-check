@@ -260,6 +260,17 @@
   </div>
 
   <div class="panel">
+    <div class="panel-title">24h Timeline (hourly)</div>
+    <div class="timeline-rows" id="timeline-rows-24h"></div>
+    <div class="timeline-dates" id="timeline-dates-24h"></div>
+    <div class="timeline-legend">
+      <span><span class="swatch" style="background: var(--green-dim)"></span>No downtime</span>
+      <span><span class="swatch" style="background: var(--orange-dim)"></span>1-30 s down</span>
+      <span><span class="swatch" style="background: var(--red-dim)"></span>31 s+ down</span>
+    </div>
+  </div>
+
+  <div class="panel">
     <div class="panel-title">7-day Timeline (hourly)</div>
     <div class="timeline-rows" id="timeline-rows"></div>
     <div class="timeline-dates" id="timeline-dates"></div>
@@ -481,6 +492,48 @@ function renderUptime(events) {
   }
 }
 
+// ── Render: 24-hour timeline ──────────────────────────────────────────────────
+
+function render24hTimeline(events) {
+  const now = new Date();
+  const start24 = new Date(now - 86400e3);
+  const HOURS = 24;
+  const HOUR_MS = 3600e3;
+
+  const rowsEl  = document.getElementById('timeline-rows-24h');
+  const datesEl = document.getElementById('timeline-dates-24h');
+  rowsEl.innerHTML = '';
+
+  for (const [id, cfg] of Object.entries(IFACES)) {
+    let segs = '';
+    for (let i = 0; i < HOURS; i++) {
+      const segStart = new Date(start24.getTime() + i * HOUR_MS);
+      const segEnd   = new Date(segStart.getTime() + HOUR_MS);
+      const downS = Math.round(downtimeMs(events, id, segStart, segEnd) / 1000);
+      let cls;
+      if (downS === 0)      cls = 'up';
+      else if (downS <= 30) cls = 'warn';
+      else                  cls = 'down';
+      const label = segStart.toLocaleString('cs-CZ', { ...CZ, weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+      const title = downS > 0 ? `${label} · ${downS} s down` : `${label} · up`;
+      segs += `<div class="tseg ${cls}" title="${title}"></div>`;
+    }
+    rowsEl.insertAdjacentHTML('beforeend', `
+      <div class="timeline-row">
+        <div class="timeline-lbl">${id.toUpperCase()}</div>
+        <div class="timeline-bar">${segs}</div>
+      </div>`);
+  }
+
+  // Time labels: 7 labels, one every 4 hours
+  let labels = '';
+  for (let h = 0; h <= HOURS; h += 4) {
+    const t = new Date(start24.getTime() + h * HOUR_MS);
+    labels += `<span>${t.toLocaleTimeString('cs-CZ', { ...CZ, hour: '2-digit', minute: '2-digit' })}</span>`;
+  }
+  datesEl.innerHTML = labels;
+}
+
 // ── Render: 7-day timeline ────────────────────────────────────────────────────
 
 function renderTimeline(events) {
@@ -689,6 +742,7 @@ async function refresh() {
     const events = await loadEvents();
     renderCards(events);
     renderUptime(events);
+    render24hTimeline(events);
     renderTimeline(events);
     renderDailyTimeline(events);
     renderIncidents(events);

@@ -37,7 +37,7 @@ Cloudflare Worker cron (every 6 h)
 Dashboard (https://reports.itrinity.com/internal/zatecka-internet-check/)
   → static HTML/JS served from the reports portal (Worker + private R2, Google sign-in)
   → fetches data/*.json directly from GitHub raw URLs (always current)
-  → shows current status, uptime %, 7-day hourly timeline, 365-day daily timeline, incidents
+  → shows current status, uptime %, 24h hourly timeline, 7-day hourly timeline, 365-day daily timeline, incidents
   → timelines color each hour/day bucket by total downtime (0 s green, 1-30 s orange, 31 s+ red)
   → incidents: paginated (20/page), filterable by interface (All/WAN/5G)
   → "Check Now" button triggers immediate poll via same Worker (POST /)
