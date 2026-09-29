@@ -39,6 +39,8 @@ Dashboard (https://reports.itrinity.com/internal/zatecka-internet-check/)
   → fetches data/*.json directly from GitHub raw URLs (always current)
   → shows current status, uptime %, 24h hourly timeline, 7-day hourly timeline, 365-day daily timeline, incidents
   → timelines color each hour/day bucket by total downtime (0 s green, 1-30 s orange, 31 s+ red)
+  → an "up" alert with no "down" before it is drawn as a hatched "down, start unknown" bucket and
+    listed as an incident with unknown start; uptime % cannot count it (a note under the table says how many)
   → incidents: paginated (20/page), filterable by interface (All/WAN/5G)
   → "Check Now" button triggers immediate poll via same Worker (POST /)
   → "Last checked" timestamp pulled from Worker KV (GET /)
@@ -174,5 +176,6 @@ Poll cadence is every 6 h (`0 */6 * * *`), set 2026-07-07. It was `*/5` (every 5
 - **Gmail 401 / token refresh failed?** `wrangler tail` shows `Gmail token refresh failed: <status>` (fails at the very first step). Re-run the `gmail-mcp` palefire auth, then re-set `GMAIL_CLIENT_ID` / `GMAIL_CLIENT_SECRET` / `GMAIL_REFRESH_TOKEN` from `~/.gmail-mcp/palefire/` via `wrangler secret put`.
 - **Worker cron not firing?** Check Worker logs in Cloudflare dashboard → Workers & Pages → zatecka-check-now → Observability. Also verify via `GET https://zatecka-check-now.michal-aftanas.workers.dev` — if `lastPolledAt` is stale, something is wrong. If a manual POST fails after ~9 s (not ~1 s), the poll is running but throwing mid-work; the most likely cause is exceeding the 50-subrequest free-plan limit on a large email backlog (see `FETCH_CAP` in `worker/index.js`).
 - **Adding a new interface?** Add it to the `IFACES` object in `index.html` and redeploy Pages. FortiGate emails will be picked up automatically as long as the interface name matches.
+- **WAN "down" email late, or an "up" email with no "down" before it?** The FortiGate sends its alert emails over the WAN line itself (every alert leaves from the WAN line's public address via `smtp-relay.gmail.com`), so a WAN "down" alert can only leave once WAN is back: it arrives late, or never. Verified 2026-09-29 across all 315 alert emails: 5G "down" alerts go out within 4 s, WAN "down" alerts only after WAN recovers (the send time equals the recovery time), and 5 WAN outages in September have no "down" alert at all. The dashboard shows those as "down, start unknown". Fix on the FortiGate: `config system email-server` → `set interface-select-method sdwan`, so alert mail follows SD-WAN and fails over to 5G; the Google SMTP relay must then also accept mail arriving from the 5G address (SMTP AUTH rather than an IP allowlist). Test by unplugging WAN: the "down" email should arrive within seconds.
 - **Data file rotation?** Handled automatically by the Worker. Old files stay in the repo forever; `data/index.json` lists all of them and the dashboard loads all.
 - **Emergency manual poll?** GitHub Actions → poll.yml → Run workflow. Or: `curl -X POST https://zatecka-check-now.michal-aftanas.workers.dev`.

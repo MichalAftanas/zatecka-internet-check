@@ -164,6 +164,8 @@
     .tseg.warn:hover { background: var(--orange); cursor: default; }
     .tseg.down { background: var(--red-dim); }
     .tseg.down:hover { background: var(--red); cursor: default; }
+    .tseg.unk  { background: repeating-linear-gradient(135deg, var(--red-dim) 0 3px, var(--surface2) 3px 6px); }
+    .tseg.unk:hover { background: repeating-linear-gradient(135deg, var(--red) 0 3px, var(--surface2) 3px 6px); cursor: default; }
     .timeline-dates {
       display: flex;
       justify-content: space-between;
@@ -205,6 +207,8 @@
     .ev-down { color: var(--red); font-weight: 600; }
     .ev-up   { color: var(--green); }
     .ev-ongoing { color: var(--red); font-size: 0.72rem; margin-left: 6px; }
+    .ev-lost { color: var(--muted); font-size: 0.72rem; margin-left: 6px; }
+    .uptime-note { margin-top: 12px; font-size: 0.72rem; color: var(--muted); }
     .dur { color: var(--muted); font-variant-numeric: tabular-nums; }
     .empty-row td { text-align: center; color: var(--muted); padding: 28px 12px; }
     .pagination { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 14px 0 4px; font-size: 0.82rem; }
@@ -257,6 +261,7 @@
       </thead>
       <tbody id="uptime-body"></tbody>
     </table>
+    <div class="uptime-note" id="uptime-note"></div>
   </div>
 
   <div class="panel">
@@ -267,6 +272,7 @@
       <span><span class="swatch" style="background: var(--green-dim)"></span>No downtime</span>
       <span><span class="swatch" style="background: var(--orange-dim)"></span>1-30 s down</span>
       <span><span class="swatch" style="background: var(--red-dim)"></span>31 s+ down</span>
+      <span><span class="swatch" style="background: repeating-linear-gradient(135deg, var(--red-dim) 0 2px, var(--surface2) 2px 4px)"></span>Down, start unknown</span>
     </div>
   </div>
 
@@ -278,6 +284,7 @@
       <span><span class="swatch" style="background: var(--green-dim)"></span>No downtime</span>
       <span><span class="swatch" style="background: var(--orange-dim)"></span>1-30 s down</span>
       <span><span class="swatch" style="background: var(--red-dim)"></span>31 s+ down</span>
+      <span><span class="swatch" style="background: repeating-linear-gradient(135deg, var(--red-dim) 0 2px, var(--surface2) 2px 4px)"></span>Down, start unknown</span>
     </div>
   </div>
 
@@ -289,6 +296,7 @@
       <span><span class="swatch" style="background: var(--green-dim)"></span>No downtime</span>
       <span><span class="swatch" style="background: var(--orange-dim)"></span>1-30 s down</span>
       <span><span class="swatch" style="background: var(--red-dim)"></span>31 s+ down</span>
+      <span><span class="swatch" style="background: repeating-linear-gradient(135deg, var(--red-dim) 0 2px, var(--surface2) 2px 4px)"></span>Down, start unknown</span>
     </div>
   </div>
 
@@ -359,6 +367,24 @@ function uptimePct(events, iface, start, end) {
   if (state === 'dead') deadMs += end - cursor;
   const total = end - start;
   return total > 0 ? (total - deadMs) / total * 100 : 100;
+}
+
+// The FortiGate sends its alert emails over the WAN line, so a WAN "down" alert can only
+// leave once WAN is back, and sometimes never arrives. An "up" with no "down" before it is
+// therefore an outage whose end is known but whose start is not.
+function unmatchedUps(events) {
+  const state = {};
+  const out = [];
+  for (const ev of events) {
+    if (ev.to === 'alive' && ev.from === 'dead' && (state[ev.iface] || 'alive') === 'alive') out.push(ev);
+    state[ev.iface] = ev.to;
+  }
+  return out;
+}
+
+function lostNote(ups) {
+  const times = ups.map(e => new Date(e.ts).toLocaleTimeString('cs-CZ', { ...CZ, hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+  return `back up at ${times.join(', ')}, outage start unknown (down alert never arrived)`;
 }
 
 // ── Formatting ────────────────────────────────────────────────────────────────
@@ -490,6 +516,17 @@ function renderUptime(events) {
       <td class="dur">${fmtDowntime(dt365)}</td>
     </tr>`);
   }
+
+  const lost = unmatchedUps(events);
+  const noteEl = document.getElementById('uptime-note');
+  if (!lost.length) { noteEl.textContent = ''; return; }
+  const perIface = Object.keys(IFACES)
+    .map(id => [id, lost.filter(e => e.iface === id).length])
+    .filter(([, n]) => n)
+    .map(([id, n]) => `${id.toUpperCase()} ${n}`).join(', ');
+  const latest = lost[lost.length - 1];
+  noteEl.textContent = `Not counted above: ${lost.length} outage${lost.length === 1 ? '' : 's'} with a known end but no start, `
+    + `because the down alert never arrived (${perIface}). Latest: ${latest.iface.toUpperCase()} back up ${fmtTs(new Date(latest.ts))}.`;
 }
 
 // ── Render: 24-hour timeline ──────────────────────────────────────────────────
@@ -504,18 +541,23 @@ function render24hTimeline(events) {
   const datesEl = document.getElementById('timeline-dates-24h');
   rowsEl.innerHTML = '';
 
+  const lostUps = unmatchedUps(events);
+
   for (const [id, cfg] of Object.entries(IFACES)) {
     let segs = '';
     for (let i = 0; i < HOURS; i++) {
       const segStart = new Date(start24.getTime() + i * HOUR_MS);
       const segEnd   = new Date(segStart.getTime() + HOUR_MS);
       const downS = Math.round(downtimeMs(events, id, segStart, segEnd) / 1000);
+      const lost  = lostUps.filter(e => e.iface === id && new Date(e.ts) > segStart && new Date(e.ts) <= segEnd);
       let cls;
-      if (downS === 0)      cls = 'up';
+      if (lost.length)      cls = 'unk';
+      else if (downS === 0) cls = 'up';
       else if (downS <= 30) cls = 'warn';
       else                  cls = 'down';
       const label = segStart.toLocaleString('cs-CZ', { ...CZ, weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
-      const title = downS > 0 ? `${label} · ${downS} s down` : `${label} · up`;
+      let title = downS > 0 ? `${label} · ${downS} s down` : `${label} · up`;
+      if (lost.length) title = `${label} · ${lostNote(lost)}${downS > 0 ? ` · also ${downS} s down` : ''}`;
       segs += `<div class="tseg ${cls}" title="${title}"></div>`;
     }
     rowsEl.insertAdjacentHTML('beforeend', `
@@ -546,18 +588,23 @@ function renderTimeline(events) {
   const datesEl = document.getElementById('timeline-dates');
   rowsEl.innerHTML = '';
 
+  const lostUps = unmatchedUps(events);
+
   for (const [id, cfg] of Object.entries(IFACES)) {
     let segs = '';
     for (let i = 0; i < HOURS; i++) {
       const segStart = new Date(start7.getTime() + i * HOUR_MS);
       const segEnd   = new Date(segStart.getTime() + HOUR_MS);
       const downS = Math.round(downtimeMs(events, id, segStart, segEnd) / 1000);
+      const lost  = lostUps.filter(e => e.iface === id && new Date(e.ts) > segStart && new Date(e.ts) <= segEnd);
       let cls;
-      if (downS === 0)      cls = 'up';
+      if (lost.length)      cls = 'unk';
+      else if (downS === 0) cls = 'up';
       else if (downS <= 30) cls = 'warn';
       else                  cls = 'down';
       const label = segStart.toLocaleString('cs-CZ', { ...CZ, weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit' });
-      const title = downS > 0 ? `${label} · ${downS} s down` : `${label} · up`;
+      let title = downS > 0 ? `${label} · ${downS} s down` : `${label} · up`;
+      if (lost.length) title = `${label} · ${lostNote(lost)}${downS > 0 ? ` · also ${downS} s down` : ''}`;
       segs += `<div class="tseg ${cls}" title="${title}"></div>`;
     }
     rowsEl.insertAdjacentHTML('beforeend', `
@@ -588,18 +635,23 @@ function renderDailyTimeline(events) {
   const datesEl = document.getElementById('timeline-dates-daily');
   rowsEl.innerHTML = '';
 
+  const lostUps = unmatchedUps(events);
+
   for (const [id, cfg] of Object.entries(IFACES)) {
     let segs = '';
     for (let i = 0; i < DAYS; i++) {
       const segStart = new Date(start.getTime() + i * DAY_MS);
       const segEnd   = new Date(segStart.getTime() + DAY_MS);
       const downS = Math.round(downtimeMs(events, id, segStart, segEnd) / 1000);
+      const lost  = lostUps.filter(e => e.iface === id && new Date(e.ts) > segStart && new Date(e.ts) <= segEnd);
       let cls;
-      if (downS === 0)      cls = 'up';
+      if (lost.length)      cls = 'unk';
+      else if (downS === 0) cls = 'up';
       else if (downS <= 30) cls = 'warn';
       else                  cls = 'down';
       const label = segStart.toLocaleDateString('cs-CZ', { ...CZ, weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric' });
-      const title = downS > 0 ? `${label} · ${downS} s down` : `${label} · up`;
+      let title = downS > 0 ? `${label} · ${downS} s down` : `${label} · up`;
+      if (lost.length) title = `${label} · ${lostNote(lost)}${downS > 0 ? ` · also ${downS} s down` : ''}`;
       segs += `<div class="tseg ${cls}" title="${title}"></div>`;
     }
     rowsEl.insertAdjacentHTML('beforeend', `
@@ -636,12 +688,14 @@ function buildIncidents(events) {
     } else if (ev.to === 'alive' && open[ev.iface]) {
       incidents.push({ iface: ev.iface, down: open[ev.iface], up: ev });
       delete open[ev.iface];
+    } else if (ev.to === 'alive' && ev.from === 'dead') {
+      incidents.push({ iface: ev.iface, down: null, up: ev });  // down alert never arrived
     }
   }
   for (const [iface, down] of Object.entries(open)) {
     incidents.push({ iface, down, up: null });
   }
-  incidents.sort((a, b) => new Date(b.down.ts) - new Date(a.down.ts));
+  incidents.sort((a, b) => new Date((b.down || b.up).ts) - new Date((a.down || a.up).ts));
   return incidents;
 }
 
@@ -673,20 +727,20 @@ function renderIncidentPage() {
   const page  = filteredIncidents.slice(start, start + PER_PAGE);
 
   body.innerHTML = page.map(inc => {
-    const downT = new Date(inc.down.ts);
+    const downT = inc.down ? new Date(inc.down.ts) : null;
     const upT   = inc.up ? new Date(inc.up.ts) : null;
-    const dur   = upT ? upT - downT : null;
+    const dur   = downT && upT ? upT - downT : null;
     const ongoing = !inc.up;
     return `<tr>
-      <td>${fmtTs(downT)}</td>
+      <td>${downT ? fmtTs(downT) : '<span class="dur">unknown</span>'}</td>
       <td><span class="badge-iface ${inc.iface}">${inc.iface.toUpperCase()}</span></td>
       <td>
-        <span class="ev-down">▼ DOWN</span>
+        <span class="ev-down">▼ DOWN</span>${downT ? '' : '<span class="ev-lost">start unknown, down alert never arrived</span>'}
         ${ongoing
           ? '<span class="ev-ongoing">● ongoing</span>'
           : upT ? ` → <span class="ev-up">▲ UP</span> ${fmtTs(upT)}` : ''}
       </td>
-      <td class="dur">${fmtDur(dur)}</td>
+      <td class="dur">${downT ? fmtDur(dur) : 'unknown'}</td>
     </tr>`;
   }).join('');
 
