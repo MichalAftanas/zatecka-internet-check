@@ -369,9 +369,9 @@ function uptimePct(events, iface, start, end) {
   return total > 0 ? (total - deadMs) / total * 100 : 100;
 }
 
-// The FortiGate sends its alert emails over the WAN line, so a WAN "down" alert can only
-// leave once WAN is back, and sometimes never arrives. An "up" with no "down" before it is
-// therefore an outage whose end is known but whose start is not.
+// A WAN "down" alert from the FortiGate does not get out while WAN is dead: it arrives after
+// WAN recovers, or never. An "up" with no "down" before it is therefore an outage whose end
+// is known but whose start is not.
 function unmatchedUps(events) {
   const state = {};
   const out = [];
