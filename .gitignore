@@ -7,3 +7,6 @@ worker/.wrangler/
 
 # Local session state (internal notes, not for this public repo)
 SESSION.md
+
+# Documents for third parties (office IP, mail setup), not for this public repo
+deliverables/
